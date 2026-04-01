@@ -32,7 +32,7 @@ window.addEventListener('resize', resize);
 
 // --- Config ---
 const MAX_DEPTH = 11;
-const TRUNK_LENGTH_RATIO = 0.26;
+const TRUNK_LENGTH_RATIO = 0.18;
 const BRANCH_SHRINK = 0.72;
 const BASE_ANGLE_SPREAD = Math.PI / 5.5;
 const ANGLE_RANDOM = 0.15;
@@ -251,7 +251,7 @@ function drawMoon() {
 
 // --- Ground ---
 function drawGround() {
-  const gy = H * 0.88;
+  const gy = H * 0.92;
   const grad = ctx.createLinearGradient(0, gy - 20, 0, H);
   grad.addColorStop(0, '#1a1520');
   grad.addColorStop(0.3, '#15101a');
@@ -331,7 +331,8 @@ let phaseStart = 0;
 
 function init() {
   rng = mulberry32(Math.floor(Math.random() * 999999));
-  tree = buildTree(W / 2, H * 0.88, -Math.PI / 2, H * TRUNK_LENGTH_RATIO, TRUNK_WIDTH, 0);
+  const trunkLen = Math.min(W, H) * TRUNK_LENGTH_RATIO;
+  tree = buildTree(W / 2, H * 0.92, -Math.PI / 2, trunkLen, TRUNK_WIDTH, 0);
   initFallingPetals();
   phase = 'growing';
   growProgress = 0;
@@ -362,7 +363,7 @@ function loop(now) {
   drawMoon();
   drawGround();
 
-  drawNode(tree, W / 2, H * 0.88, now);
+  drawNode(tree, W / 2, H * 0.92, now);
 
   // Falling petals once canopy starts appearing
   if (growProgress > 0.6 || phase === 'swaying') {
