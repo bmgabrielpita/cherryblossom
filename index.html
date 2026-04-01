@@ -32,7 +32,7 @@ window.addEventListener('resize', resize);
 
 // --- Config ---
 const MAX_DEPTH = 11;
-const TRUNK_LENGTH_RATIO = 0.18;
+const TRUNK_LENGTH_RATIO = 0.22;
 const BRANCH_SHRINK = 0.72;
 const BASE_ANGLE_SPREAD = Math.PI / 5.5;
 const ANGLE_RANDOM = 0.15;
@@ -331,7 +331,9 @@ let phaseStart = 0;
 
 function init() {
   rng = mulberry32(Math.floor(Math.random() * 999999));
-  const trunkLen = Math.min(W, H) * TRUNK_LENGTH_RATIO;
+  // Blend between W and H so the tree scales well on both portrait and landscape
+  const baseSize = W * 0.4 + H * 0.6;
+  const trunkLen = baseSize * TRUNK_LENGTH_RATIO;
   tree = buildTree(W / 2, H * 0.92, -Math.PI / 2, trunkLen, TRUNK_WIDTH, 0);
   initFallingPetals();
   phase = 'growing';
