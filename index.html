@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cherry Blossom Fractal</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0a1a; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; touch-action: none; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+
+let W, H;
+function resize() {
+  const wasSwaying = phase === 'swaying';
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+  initStars();
+  init();
+  if (wasSwaying) {
+    phase = 'swaying';
+    growProgress = 1;
+  }
+}
+window.addEventListener('resize', resize);
+
+// --- Config ---
+const MAX_DEPTH = 11;
+const TRUNK_LENGTH_RATIO = 0.26;
+const BRANCH_SHRINK = 0.72;
+const BASE_ANGLE_SPREAD = Math.PI / 5.5;
+const ANGLE_RANDOM = 0.15;
+const TRUNK_WIDTH = 14;
+const WIDTH_SHRINK = 0.67;
+
+// --- Growth animation ---
+const GROW_DURATION = 5000;
+let growProgress = 0;
+
+// --- Wind ---
+let windTime = 0;
+const WIND_SPEED = 0.0008;
+
+// --- Tree stored as a recursive structure ---
+let tree = null;
+
+// Seeded random for stable per-tree randomness
+function mulberry32(a) {
+  return function() {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+let rng;
+
+function buildTree(x, y, angle, length, width, depth) {
+  const node = {
+    angle,
+    length,
+    width,
+    depth,
+    children: [],
+    // Pre-compute blossom cluster data for leaf-ish nodes
+    blossoms: null
+  };
+
+  if (depth >= MAX_DEPTH || length < 2) {
+    // Terminal node — always gets blossoms
+    node.blossoms = makeBlossomCluster();
+    return node;
+  }
+
+  // Add blossoms on deeper branches too for fullness
+  if (depth >= 7 && rng() < 0.4) {
+    node.blossoms = makeBlossomCluster();
+  }
+
+  const nextLen = length * (BRANCH_SHRINK + (rng() - 0.5) * 0.08);
+  const nextWidth = Math.max(1, width * WIDTH_SHRINK);
+  const angleVar = () => (rng() - 0.5) * ANGLE_RANDOM;
+  const spread = BASE_ANGLE_SPREAD + (rng() - 0.5) * 0.1;
+
+  node.children.push(buildTree(0, 0, angle - spread + angleVar(), nextLen, nextWidth, depth + 1));
+  node.children.push(buildTree(0, 0, angle + spread + angleVar(), nextLen, nextWidth, depth + 1));
+
+  // Occasional third branch
+  if (depth > 2 && depth < 7 && rng() < 0.3) {
+    node.children.push(buildTree(0, 0, angle + angleVar() * 2, nextLen * 0.85, nextWidth * 0.8, depth + 1));
+  }
+
+  return node;
+}
+
+function makeBlossomCluster() {
+  const count = 3 + Math.floor(rng() * 4);
+  const petals = [];
+  const pinkOptions = [
+    [255, 182, 193],
+    [255, 150, 170],
+    [255, 200, 210],
+    [255, 130, 160],
+    [255, 220, 230],
+    [255, 160, 185],
+  ];
+  for (let i = 0; i < count; i++) {
+    petals.push({
+      ox: (rng() - 0.5) * 12,
+      oy: (rng() - 0.5) * 12,
+      r: 3 + rng() * 5,
+      color: pinkOptions[Math.floor(rng() * pinkOptions.length)],
+      phase: rng() * Math.PI * 2,
+    });
+  }
+  return { petals, glowR: 8 + rng() * 6 };
+}
+
+// --- Branch color ---
+function branchColor(depth) {
+  const t = depth / MAX_DEPTH;
+  const r = Math.floor(55 + t * 50);
+  const g = Math.floor(30 + t * 15);
+  const b = Math.floor(20 + t * 25);
+  return `rgb(${r},${g},${b})`;
+}
+
+// --- Draw tree recursively with accumulated sway ---
+function drawNode(node, startX, startY, now) {
+  const depthRatio = node.depth / MAX_DEPTH;
+
+  // Check if this branch should be visible yet
+  if (growProgress < depthRatio) return;
+
+  // Local growth progress for this branch segment
+  const segmentSize = 1 / MAX_DEPTH;
+  const localProgress = Math.min(1, (growProgress - depthRatio) / segmentSize);
+
+  // Wind sway — increases with depth, varies by time
+  const windSway = Math.sin(windTime * 1.2 + node.depth * 0.7) * 0.02 * node.depth
+                  + Math.sin(windTime * 0.7 + node.depth * 1.1) * 0.01 * node.depth;
+
+  const swayedAngle = node.angle + windSway;
+
+  // Compute endpoint based on local progress
+  const drawnLength = node.length * localProgress;
+  const endX = startX + Math.cos(swayedAngle) * drawnLength;
+  const endY = startY + Math.sin(swayedAngle) * drawnLength;
+
+  // Draw branch
+  ctx.beginPath();
+  ctx.moveTo(startX, startY);
+  ctx.lineTo(endX, endY);
+  ctx.strokeStyle = branchColor(node.depth);
+  ctx.lineWidth = node.width;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+
+  // Draw blossoms at this node's endpoint
+  if (node.blossoms && localProgress > 0.5) {
+    const blossomAlpha = Math.min(1, (localProgress - 0.5) * 2);
+    drawBlossomCluster(node.blossoms, endX, endY, blossomAlpha, now);
+  }
+
+  // Recurse to children only when this branch is fully drawn
+  if (localProgress >= 1) {
+    for (const child of node.children) {
+      drawNode(child, endX, endY, now);
+    }
+  }
+}
+
+function drawBlossomCluster(cluster, cx, cy, alpha, now) {
+  for (const p of cluster.petals) {
+    // Gentle bobbing
+    const bob = Math.sin(now * 0.002 + p.phase) * 1.5;
+    const bx = cx + p.ox + bob;
+    const by = cy + p.oy + Math.cos(now * 0.0015 + p.phase) * 1;
+
+    ctx.beginPath();
+    ctx.arc(bx, by, p.r, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${p.color[0]},${p.color[1]},${p.color[2]},${alpha * 0.8})`;
+    ctx.fill();
+  }
+
+  // Soft glow
+  ctx.beginPath();
+  ctx.arc(cx, cy, cluster.glowR, 0, Math.PI * 2);
+  ctx.fillStyle = `rgba(255,180,200,${alpha * 0.1})`;
+  ctx.fill();
+}
+
+// --- Sky ---
+function drawSky() {
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, '#0b0b2a');
+  grad.addColorStop(0.3, '#141438');
+  grad.addColorStop(0.6, '#1e1e4a');
+  grad.addColorStop(0.85, '#2a1a3a');
+  grad.addColorStop(1, '#1a1028');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+}
+
+// --- Stars ---
+let stars = [];
+function initStars() {
+  stars = [];
+  for (let i = 0; i < 150; i++) {
+    stars.push({
+      x: Math.random() * W,
+      y: Math.random() * H * 0.6,
+      r: 0.3 + Math.random() * 1.5,
+      twinkle: Math.random() * Math.PI * 2,
+      speed: 0.01 + Math.random() * 0.03
+    });
+  }
+}
+initStars();
+
+function drawStars() {
+  for (const s of stars) {
+    s.twinkle += s.speed;
+    const alpha = 0.3 + 0.5 * (0.5 + 0.5 * Math.sin(s.twinkle));
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(255,255,240,${alpha})`;
+    ctx.fill();
+  }
+}
+
+// --- Moon ---
+function drawMoon() {
+  const mx = W * 0.82, my = H * 0.12, mr = 35;
+  ctx.save();
+  ctx.shadowColor = 'rgba(255,250,200,0.4)';
+  ctx.shadowBlur = 50;
+  ctx.beginPath();
+  ctx.arc(mx, my, mr, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(255,250,230,0.9)';
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.restore();
+}
+
+// --- Ground ---
+function drawGround() {
+  const gy = H * 0.88;
+  const grad = ctx.createLinearGradient(0, gy - 20, 0, H);
+  grad.addColorStop(0, '#1a1520');
+  grad.addColorStop(0.3, '#15101a');
+  grad.addColorStop(1, '#0d0a12');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.ellipse(W / 2, gy + 30, W * 0.55, 55, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillRect(0, gy + 20, W, H - gy);
+}
+
+// --- Falling petals ---
+const MAX_FALLING = 100;
+let fallingPetals = [];
+
+function initFallingPetals() {
+  fallingPetals = [];
+  for (let i = 0; i < MAX_FALLING; i++) {
+    fallingPetals.push(makeFallingPetal(true));
+  }
+}
+
+function makeFallingPetal(randomY) {
+  const pinks = [
+    [255, 183, 197], [255, 150, 170], [255, 200, 210],
+    [255, 220, 230], [255, 170, 190], [255, 130, 160]
+  ];
+  return {
+    x: Math.random() * W,
+    y: randomY ? Math.random() * H * 0.7 : -10 - Math.random() * 80,
+    vy: 0.3 + Math.random() * 0.7,
+    size: 2 + Math.random() * 4,
+    rot: Math.random() * Math.PI * 2,
+    rotSpeed: (Math.random() - 0.5) * 0.04,
+    drift: Math.random() * Math.PI * 2,
+    driftSpeed: 0.005 + Math.random() * 0.01,
+    alpha: 0.4 + Math.random() * 0.5,
+    color: pinks[Math.floor(Math.random() * pinks.length)],
+    delay: Math.random() * 3000,
+    born: performance.now()
+  };
+}
+
+function updateFallingPetals(dt, now) {
+  const windX = Math.sin(windTime * 2) * 0.5 + 0.2;
+  for (let i = 0; i < fallingPetals.length; i++) {
+    const p = fallingPetals[i];
+    if (now - p.born < p.delay) continue;
+    p.drift += p.driftSpeed;
+    p.x += windX + Math.sin(p.drift) * 0.5;
+    p.y += p.vy;
+    p.rot += p.rotSpeed;
+    if (p.y > H + 20 || p.x > W + 40 || p.x < -40) {
+      fallingPetals[i] = makeFallingPetal(false);
+    }
+  }
+}
+
+function drawFallingPetals(now) {
+  for (const p of fallingPetals) {
+    if (now - p.born < p.delay) continue;
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.rotate(p.rot);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, p.size, p.size * 0.55, 0, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${p.color[0]},${p.color[1]},${p.color[2]},${p.alpha})`;
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+// --- Main loop ---
+let lastTime = 0;
+let phase = 'growing';
+let phaseStart = 0;
+
+function init() {
+  rng = mulberry32(Math.floor(Math.random() * 999999));
+  tree = buildTree(W / 2, H * 0.88, -Math.PI / 2, H * TRUNK_LENGTH_RATIO, TRUNK_WIDTH, 0);
+  initFallingPetals();
+  phase = 'growing';
+  growProgress = 0;
+  phaseStart = performance.now();
+}
+
+function loop(now) {
+  const dt = now - (lastTime || now);
+  lastTime = now;
+  windTime += WIND_SPEED * dt;
+
+  // Phase management
+  if (phase === 'growing') {
+    let raw = Math.min(1, (now - phaseStart) / GROW_DURATION);
+    growProgress = 1 - Math.pow(1 - raw, 2.5);
+    if (raw >= 1) {
+      phase = 'swaying';
+      phaseStart = now;
+      growProgress = 1;
+    }
+  } else if (phase === 'swaying') {
+    growProgress = 1;
+  }
+
+  // --- Render ---
+  drawSky();
+  drawStars();
+  drawMoon();
+  drawGround();
+
+  drawNode(tree, W / 2, H * 0.88, now);
+
+  // Falling petals once canopy starts appearing
+  if (growProgress > 0.6 || phase === 'swaying') {
+    updateFallingPetals(dt, now);
+    drawFallingPetals(now);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+resize();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
